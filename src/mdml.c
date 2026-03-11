@@ -25,7 +25,8 @@
 #include <string.h>
 
 #define SPAN_IS_EQ(span, str) (strncmp(span.ptr, str, span.length) == 0)
-#define TOKEN_IS_HEADER(t) ((t) == TOKEN_H2 || \
+#define TOKEN_IS_HEADER(t) ((t) == TOKEN_H1 || \
+                            (t) == TOKEN_H2 || \
                             (t) == TOKEN_H3 || \
                             (t) == TOKEN_H4 || \
                             (t) == TOKEN_H5 || \
@@ -145,7 +146,43 @@ token_type_t match_token_type(span_t view)
     if (SPAN_IS_EQ(view, "######")) 
         return TOKEN_H6;
 
-    return TOKEN_UNKNOWN;
+    return TOKEN_TEXT;
+}
+
+const char* match_token_html(token_t t) 
+{
+    switch (t.type) {
+        case TOKEN_H1:      return "h1";
+        case TOKEN_H2:      return "h2";
+        case TOKEN_H3:      return "h3";
+        case TOKEN_H4:      return "h4";
+        case TOKEN_H5:      return "h5";
+        case TOKEN_H6:      return "h6";
+        case TOKEN_OL:      return "ol";
+        case TOKEN_UL:      return "ul";
+        case TOKEN_TEXT:    return "p";
+        case TOKEN_NEWLINE: return "br";
+        default:            return "div";
+    }
+}
+
+int mdml_convert(tokens_arr_t* tokens, const char* out) 
+{
+    int out_fd;
+
+    if ((out_fd = open(out, O_RDWR | O_CREAT, 0644)) == -1)
+        perror_aboard("open");
+
+    for (int i = 0; i < tokens->len; i++) {
+        token_t token = tokens->arr[i];
+        const char* html = match_token_html(token);
+
+        printf("<%s>%.*s</%s>\n", html, 
+                (int)token.operand.length, token.operand.ptr, 
+            html);
+    }
+
+    return 0;
 }
 
 int mdml_parse(const char* input, const char* output) 
@@ -187,11 +224,16 @@ int mdml_parse(const char* input, const char* output)
         }
 
         token_type = match_token_type(token_raw);
+
+        if (token_type == TOKEN_TEXT) {
+            operand.ptr = line.ptr;
+            operand.length = line.length;
+        }
         
         // In futue we should just check if token is of primary type
-        if (TOKEN_IS_HEADER(token_type)) {
+        else if (TOKEN_IS_HEADER(token_type)) {
             operand.ptr = line.ptr + token_raw.length;
-            operand.length = token_raw.length - line.length;
+            operand.length = line.length - token_raw.length;
         }
 
 next:
@@ -199,11 +241,9 @@ next:
         line.ptr = newline + 1;
     }
 
-    for (int i = 0; i < tokens->len; i++) {
-        printf("Token type: %i\n", tokens->arr[i].type);
-    }
-
+    mdml_convert(tokens, output);
     free(input_buf);
+
     return 0;
 }
 

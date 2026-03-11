@@ -1,4 +1,5 @@
 # Prerequisites
+*.html
 *.d
 
 # Object files
