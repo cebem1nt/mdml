@@ -24,16 +24,19 @@
 #include <stdbool.h>
 #include <string.h>
 
-#define SPAN_IS_EQ(span, str) (strncmp(span.ptr, str, span.length) == 0)
-#define TOKEN_IS_HEADER(t) ((t) == TOKEN_H1 || \
-                            (t) == TOKEN_H2 || \
-                            (t) == TOKEN_H3 || \
-                            (t) == TOKEN_H4 || \
-                            (t) == TOKEN_H5 || \
-                            (t) == TOKEN_H6)
-
-#define SPAN_EMPTY ((span_t){0, NULL})
 #define TOKENS_ARR_CAP 20
+#define SPAN_EMPTY ((span_t){0, NULL})
+
+#define SPAN_IS_EQ(span, str) (strncmp(span.ptr, str, span.length) == 0)
+
+#define TOKEN_IS_PRIMARY(t) ((t) == TOKEN_H1 || \
+                             (t) == TOKEN_H2 || \
+                             (t) == TOKEN_H3 || \
+                             (t) == TOKEN_H4 || \
+                             (t) == TOKEN_H5 || \
+                             (t) == TOKEN_OL || \
+                             (t) == TOKEN_UL || \
+                             (t) == TOKEN_H6)
 
 typedef enum {
     TOKEN_UNKNOWN = -1,
@@ -57,6 +60,7 @@ typedef struct {
 typedef struct {
     token_type_t type;
     span_t operand;
+    span_t operand_extra;
 } token_t;
 
 typedef struct {
@@ -65,13 +69,13 @@ typedef struct {
     size_t len;
 } tokens_arr_t;
 
-void perror_aboard(const char* reason) 
+static void perror_aboard(const char* reason) 
 {
     perror(reason);
     exit(EXIT_FAILURE);
 }
 
-void error_aboard(const char* reason) 
+static void error_aboard(const char* reason) 
 {
     fprintf(stderr, "%s\n", reason);
     exit(EXIT_FAILURE);
@@ -80,6 +84,7 @@ void error_aboard(const char* reason)
 tokens_arr_t* tokens_arr_init() 
 {
     tokens_arr_t* out = malloc(sizeof(tokens_arr_t));
+
     if (!out)
         error_aboard("No memory");
 
@@ -106,7 +111,7 @@ void tokens_arr_append(tokens_arr_t* tokens, token_t val)
     tokens->arr[tokens->len++] = val;
 }
 
-char* readfile(int fd, size_t* out_size) 
+static char* readfile(int fd, size_t* out_size) 
 {
     size_t fsize;
     char*  out;
@@ -126,66 +131,78 @@ char* readfile(int fd, size_t* out_size)
     return out;
 }
 
-token_type_t match_token_type(span_t view) 
+
+/*
+ * Takes in any kind of span and matches it to a token
+ */
+token_type_t mdml_span_tokenize(span_t raw) 
 {
-    if (SPAN_IS_EQ(view, "#")) 
+    if (SPAN_IS_EQ(raw, "#")) 
         return TOKEN_H1;
 
-    if (SPAN_IS_EQ(view, "##")) 
+    if (SPAN_IS_EQ(raw, "##")) 
         return TOKEN_H2;    
     
-    if (SPAN_IS_EQ(view, "###")) 
+    if (SPAN_IS_EQ(raw, "###")) 
         return TOKEN_H3;   
     
-    if (SPAN_IS_EQ(view, "####")) 
+    if (SPAN_IS_EQ(raw, "####")) 
         return TOKEN_H4;    
     
-    if (SPAN_IS_EQ(view, "#####")) 
+    if (SPAN_IS_EQ(raw, "#####")) 
         return TOKEN_H5;
 
-    if (SPAN_IS_EQ(view, "######")) 
+    if (SPAN_IS_EQ(raw, "######")) 
         return TOKEN_H6;
+
+    if (SPAN_IS_EQ(raw, "-")) 
+        return TOKEN_UL;
+
+    // OL is a bit complicated
 
     return TOKEN_TEXT;
 }
 
-const char* match_token_html(token_t t) 
+const char* mdml_token_to_html(token_type_t t) 
 {
-    switch (t.type) {
+    switch (t) {
         case TOKEN_H1:      return "h1";
         case TOKEN_H2:      return "h2";
         case TOKEN_H3:      return "h3";
         case TOKEN_H4:      return "h4";
         case TOKEN_H5:      return "h5";
         case TOKEN_H6:      return "h6";
-        case TOKEN_OL:      return "ol";
-        case TOKEN_UL:      return "ul";
         case TOKEN_TEXT:    return "p";
         case TOKEN_NEWLINE: return "br";
+        case TOKEN_OL:      return "ol";
+        case TOKEN_UL:      return "ul";
         default:            return "div";
     }
 }
 
-int mdml_convert(tokens_arr_t* tokens, const char* out) 
+int mdml_convert(tokens_arr_t* tokens) 
 {
-    int out_fd;
-
-    if ((out_fd = open(out, O_RDWR | O_CREAT, 0644)) == -1)
-        perror_aboard("open");
-
     for (int i = 0; i < tokens->len; i++) {
         token_t token = tokens->arr[i];
-        const char* html = match_token_html(token);
 
-        printf("<%s>%.*s</%s>\n", html, 
-                (int)token.operand.length, token.operand.ptr, 
-            html);
+        const char* html = mdml_token_to_html(token.type);
+        
+        // TODO UL and OL
+         
+        if (token.type == TOKEN_NEWLINE) {
+            printf("<%s>\n", html);
+        } else {
+            printf("<%s>%.*s</%s>\n", 
+                html, 
+                    (int)token.operand.length, token.operand.ptr, 
+                html);
+        }
     }
 
     return 0;
 }
 
-int mdml_parse(const char* input, const char* output) 
+int mdml_parse(const char* input) 
 {
     tokens_arr_t* tokens;
     int           input_fd;
@@ -205,43 +222,44 @@ int mdml_parse(const char* input, const char* output)
 
     while ((newline = strchr(line.ptr, '\n')) != NULL) {
         line.length = newline - line.ptr;
+
         token_type_t token_type = {0};
-        span_t       token_raw = {0};
-        span_t       operand = {0};
+        span_t       token_raw  = {0},
+                     op_extra   = SPAN_EMPTY,
+                     op         = SPAN_EMPTY;
         
         if (line.length == 0) {
             token_type = TOKEN_NEWLINE;
-            operand = SPAN_EMPTY;
             goto next;
         } 
 
-        int i = 0;
         token_raw.ptr = line.ptr;
 
-        while (line.ptr[i] != ' ' && i < line.length) {
+        for (int i = 0; i < line.length; i++) {
+            if (line.ptr[i] == ' ')
+                break;
             token_raw.length++;
-            i++;            
         }
 
-        token_type = match_token_type(token_raw);
+        token_type = mdml_span_tokenize(token_raw);
 
         if (token_type == TOKEN_TEXT) {
-            operand.ptr = line.ptr;
-            operand.length = line.length;
+            op.ptr = line.ptr;
+            op.length = line.length;
         }
         
-        // In futue we should just check if token is of primary type
-        else if (TOKEN_IS_HEADER(token_type)) {
-            operand.ptr = line.ptr + token_raw.length;
-            operand.length = line.length - token_raw.length;
+        else if (TOKEN_IS_PRIMARY(token_type)) {
+            // HTML won't render trailing and leading whitespaces, no need to care
+            op.ptr = line.ptr + token_raw.length;
+            op.length = line.length - token_raw.length;
         }
 
 next:
-        tokens_arr_append(tokens, (token_t){token_type, operand});
+        tokens_arr_append(tokens, (token_t){token_type, op, op_extra});
         line.ptr = newline + 1;
     }
 
-    mdml_convert(tokens, output);
+    mdml_convert(tokens);
     free(input_buf);
 
     return 0;
@@ -250,14 +268,9 @@ next:
 int main(int argc, char** argv) 
 {
     if (argc < 2) {
-        printf("usage: %s input.md [output.html]\n", argv[0]);
+        printf("usage: %s input.md\n", argv[0]);
         return 1;
     }
 
-    char* output = "output.html";
-
-    if (argc == 3)
-        output = argv[2];
-    
-    mdml_parse(argv[1], output);
+    mdml_parse(argv[1]);
 }
