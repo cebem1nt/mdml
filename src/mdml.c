@@ -16,6 +16,7 @@
  * one will come somewhere in the future 
  */
 
+#include <ctype.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +26,7 @@
 #include <string.h>
 
 #define TOKENS_ARR_CAP 20
+#define MODE_STACK_DEPTH 100
 #define SPAN_EMPTY ((span_t){0, NULL})
 
 #define SPAN_IS_EQ(span, str) (strncmp(span.ptr, str, span.length) == 0)
@@ -158,7 +160,8 @@ token_type_t mdml_span_tokenize(span_t raw)
     if (SPAN_IS_EQ(raw, "-")) 
         return TOKEN_UL;
 
-    // OL is a bit complicated
+    if (isdigit(raw.ptr[0]) && raw.ptr[raw.length-1] == '.')
+        return TOKEN_OL;
 
     return TOKEN_TEXT;
 }
@@ -182,21 +185,37 @@ const char* mdml_token_to_html(token_type_t t)
 
 int mdml_convert(tokens_arr_t* tokens) 
 {
-    for (int i = 0; i < tokens->len; i++) {
-        token_t token = tokens->arr[i];
+    token_type_t stack[MODE_STACK_DEPTH];
+    size_t       stack_top = 0;
 
-        const char* html = mdml_token_to_html(token.type);
-        
-        // TODO UL and OL
-         
-        if (token.type == TOKEN_NEWLINE) {
+    for (size_t i = 0; i < tokens->len; i++) {
+        token_t t = tokens->arr[i];
+        const char* html = mdml_token_to_html(t.type);
+
+        if (t.type == TOKEN_OL || t.type == TOKEN_UL) {            
+            if (stack_top == 0 || stack[stack_top-1] != t.type) {
+                stack[stack_top++] = t.type;
+                printf("<%s>\n", html);
+            } 
+
+            printf("    <li>%.*s</li>\n", (int)t.operand.length, t.operand.ptr);
+        } else if (stack_top > 0) {
+            token_type_t mode = stack[--stack_top];
+            const char* closing = mdml_token_to_html(mode);
+            printf("</%s>\n", closing);
+        } else if (t.type == TOKEN_NEWLINE) {
             printf("<%s>\n", html);
         } else {
-            printf("<%s>%.*s</%s>\n", 
-                html, 
-                    (int)token.operand.length, token.operand.ptr, 
-                html);
+            printf("<%s>%.*s</%s>\n", html, 
+                (int)t.operand.length, t.operand.ptr, 
+            html);
         }
+    }
+
+    if (stack_top > 0) {
+        token_type_t mode = stack[--stack_top];
+        const char* closing = mdml_token_to_html(mode);
+        printf("</%s>\n", closing);
     }
 
     return 0;
