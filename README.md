@@ -1,4 +1,5 @@
 # MDMl
 
 Bare simple markdown to html parser in c.  
-WIP
+
+Status: Stalled, need more experience for propper parsing

@@ -25,8 +25,8 @@
 #include <stdbool.h>
 #include <string.h>
 
-#define TOKENS_ARR_CAP 20
-#define MODE_STACK_DEPTH 100
+#define DEFAULT_ARR_CAP 20
+#define STACK_DEPTH 100
 #define SPAN_EMPTY ((span_t){0, NULL})
 
 #define SPAN_IS_EQ(span, str) (strncmp(span.ptr, str, span.length) == 0)
@@ -39,6 +39,15 @@
                              (t) == TOKEN_OL || \
                              (t) == TOKEN_UL || \
                              (t) == TOKEN_H6)
+
+#define LTRIM(span) do {                               \
+    while ((span).length > 0) {                        \
+        if (*(span).ptr != ' ' && *(span).ptr != '\t') \
+            break;                                     \
+        (span).ptr++;                                  \
+        (span).length--;                               \
+    }                                                  \
+} while (0)                                            \
 
 typedef enum {
     TOKEN_UNKNOWN = -1,
@@ -90,11 +99,11 @@ tokens_arr_t* tokens_arr_init()
     if (!out)
         error_aboard("No memory");
 
-    out->arr = malloc(sizeof(token_t) * TOKENS_ARR_CAP);
+    out->arr = malloc(sizeof(token_t) * DEFAULT_ARR_CAP);
     if (!out->arr)
         error_aboard("No memory");
 
-    out->cap = TOKENS_ARR_CAP;
+    out->cap = DEFAULT_ARR_CAP;
     out->len = 0;
 
     return out;
@@ -132,7 +141,6 @@ static char* readfile(int fd, size_t* out_size)
 
     return out;
 }
-
 
 /*
  * Takes in any kind of span and matches it to a token
@@ -185,7 +193,7 @@ const char* mdml_token_to_html(token_type_t t)
 
 int mdml_convert(tokens_arr_t* tokens) 
 {
-    token_type_t stack[MODE_STACK_DEPTH];
+    token_type_t stack[STACK_DEPTH];
     size_t       stack_top = 0;
 
     for (size_t i = 0; i < tokens->len; i++) {
@@ -224,9 +232,11 @@ int mdml_convert(tokens_arr_t* tokens)
 int mdml_parse(const char* input) 
 {
     tokens_arr_t* tokens;
+    span_t        line;
     int           input_fd;
     size_t        input_size;
     char*         input_buf;
+    char*         newline; 
 
     if ((input_fd = open(input, O_RDONLY)) == -1)
         perror_aboard("open");
@@ -234,10 +244,8 @@ int mdml_parse(const char* input)
     input_buf = readfile(input_fd, &input_size);
     tokens = tokens_arr_init();
 
-    char*  newline; 
-    span_t line = {
-        0, input_buf
-    };
+    line.length = 0;
+    line.ptr = input_buf;
 
     while ((newline = strchr(line.ptr, '\n')) != NULL) {
         line.length = newline - line.ptr;
@@ -250,8 +258,9 @@ int mdml_parse(const char* input)
         if (line.length == 0) {
             token_type = TOKEN_NEWLINE;
             goto next;
-        } 
+        }
 
+        LTRIM(line);
         token_raw.ptr = line.ptr;
 
         for (int i = 0; i < line.length; i++) {
