@@ -25,12 +25,10 @@
 #include <stdbool.h>
 #include <string.h>
 
-#define DEFAULT_ARR_CAP 20
+#define BACE_IMPLEMENTATION
+#include "include/bace.h"
+
 #define STACK_DEPTH 100
-#define SPAN_EMPTY ((span_t){0, NULL})
-
-#define SPAN_IS_EQ(span, str) (strncmp(span.ptr, str, span.length) == 0)
-
 #define TOKEN_IS_PRIMARY(t) ((t) == TOKEN_H1 || \
                              (t) == TOKEN_H2 || \
                              (t) == TOKEN_H3 || \
@@ -39,15 +37,6 @@
                              (t) == TOKEN_OL || \
                              (t) == TOKEN_UL || \
                              (t) == TOKEN_H6)
-
-#define LTRIM(span) do {                               \
-    while ((span).length > 0) {                        \
-        if (*(span).ptr != ' ' && *(span).ptr != '\t') \
-            break;                                     \
-        (span).ptr++;                                  \
-        (span).length--;                               \
-    }                                                  \
-} while (0)                                            \
 
 typedef enum {
     TOKEN_UNKNOWN = -1,
@@ -62,11 +51,6 @@ typedef enum {
     TOKEN_TEXT,
     TOKEN_NEWLINE,
 } token_type_t;
-
-typedef struct {
-    size_t length;
-    char* ptr;
-} span_t;
 
 typedef struct {
     token_type_t type;
@@ -91,36 +75,6 @@ static void error_aboard(const char* reason)
     fprintf(stderr, "%s\n", reason);
     exit(EXIT_FAILURE);
 } 
-
-tokens_arr_t* tokens_arr_init() 
-{
-    tokens_arr_t* out = malloc(sizeof(tokens_arr_t));
-
-    if (!out)
-        error_aboard("No memory");
-
-    out->arr = malloc(sizeof(token_t) * DEFAULT_ARR_CAP);
-    if (!out->arr)
-        error_aboard("No memory");
-
-    out->cap = DEFAULT_ARR_CAP;
-    out->len = 0;
-
-    return out;
-}
-
-void tokens_arr_append(tokens_arr_t* tokens, token_t val) 
-{
-    if (tokens->len >= tokens->cap) {
-        tokens->cap *= 2;
-        tokens->arr = realloc(tokens->arr, tokens->cap * sizeof(token_t));
-
-        if (!tokens->arr) 
-            error_aboard("No memory");
-    }
-    
-    tokens->arr[tokens->len++] = val;
-}
 
 static char* readfile(int fd, size_t* out_size) 
 {
@@ -147,25 +101,25 @@ static char* readfile(int fd, size_t* out_size)
  */
 token_type_t mdml_span_tokenize(span_t raw) 
 {
-    if (SPAN_IS_EQ(raw, "#")) 
+    if (span_iseq(raw, SPAN("#"))) 
         return TOKEN_H1;
 
-    if (SPAN_IS_EQ(raw, "##")) 
+    if (span_iseq(raw, SPAN("##"))) 
         return TOKEN_H2;    
     
-    if (SPAN_IS_EQ(raw, "###")) 
-        return TOKEN_H3;   
+    if (span_iseq(raw, SPAN("###"))) 
+        return TOKEN_H3;
     
-    if (SPAN_IS_EQ(raw, "####")) 
-        return TOKEN_H4;    
+    if (span_iseq(raw, SPAN("####"))) 
+        return TOKEN_H4;
     
-    if (SPAN_IS_EQ(raw, "#####")) 
+    if (span_iseq(raw, SPAN("#####"))) 
         return TOKEN_H5;
 
-    if (SPAN_IS_EQ(raw, "######")) 
+    if (span_iseq(raw, SPAN("######"))) 
         return TOKEN_H6;
 
-    if (SPAN_IS_EQ(raw, "-")) 
+    if (span_iseq(raw, SPAN("-"))) 
         return TOKEN_UL;
 
     if (isdigit(raw.ptr[0]) && raw.ptr[raw.length-1] == '.')
@@ -231,7 +185,7 @@ int mdml_convert(tokens_arr_t* tokens)
 
 int mdml_parse(const char* input) 
 {
-    tokens_arr_t* tokens;
+    tokens_arr_t  tokens;
     span_t        line;
     int           input_fd;
     size_t        input_size;
@@ -242,7 +196,7 @@ int mdml_parse(const char* input)
         perror_aboard("open");
 
     input_buf = readfile(input_fd, &input_size);
-    tokens = tokens_arr_init();
+    DA_INIT(&tokens, token_t, 20);
 
     line.length = 0;
     line.ptr = input_buf;
@@ -260,7 +214,7 @@ int mdml_parse(const char* input)
             goto next;
         }
 
-        LTRIM(line);
+        SPAN_LTRIM(&line);
         token_raw.ptr = line.ptr;
 
         for (int i = 0; i < line.length; i++) {
@@ -283,11 +237,11 @@ int mdml_parse(const char* input)
         }
 
 next:
-        tokens_arr_append(tokens, (token_t){token_type, op, op_extra});
+        DA_APPEND(&tokens, (token_t){token_type, op, op_extra});
         line.ptr = newline + 1;
     }
 
-    mdml_convert(tokens);
+    mdml_convert(&tokens);
     free(input_buf);
 
     return 0;
