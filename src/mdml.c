@@ -64,18 +64,6 @@ typedef struct {
     size_t len;
 } tokens_arr_t;
 
-static void perror_aboard(const char* reason) 
-{
-    perror(reason);
-    exit(EXIT_FAILURE);
-}
-
-static void error_aboard(const char* reason) 
-{
-    fprintf(stderr, "%s\n", reason);
-    exit(EXIT_FAILURE);
-} 
-
 static char* readfile(int fd, size_t* out_size) 
 {
     size_t fsize;
@@ -85,10 +73,10 @@ static char* readfile(int fd, size_t* out_size)
     lseek(fd, 0, SEEK_SET);
 
     if ((out = malloc(fsize)) == NULL)
-        error_aboard("No memory");
+        error_abort("%s", "No memory");
 
     if (read(fd, out, fsize) == -1)
-        perror_aboard("read");
+        perror_abort("read");
 
     if (out_size)
         *out_size = fsize;
@@ -186,23 +174,21 @@ int mdml_convert(tokens_arr_t* tokens)
 int mdml_parse(const char* input) 
 {
     tokens_arr_t  tokens;
-    span_t        line;
+    span_t        line, raw;
     int           input_fd;
     size_t        input_size;
     char*         input_buf;
-    char*         newline; 
 
     if ((input_fd = open(input, O_RDONLY)) == -1)
-        perror_aboard("open");
+        perror_abort("open");
 
-    input_buf = readfile(input_fd, &input_size);
     DA_INIT(&tokens, token_t, 20);
+    
+    input_buf = readfile(input_fd, &input_size);
+    raw = span_from_cstr(input_buf);
 
-    line.length = 0;
-    line.ptr = input_buf;
-
-    while ((newline = strchr(line.ptr, '\n')) != NULL) {
-        line.length = newline - line.ptr;
+    while (raw.length != 0) {
+        line = span_chop_by(&raw, '\n');
 
         token_type_t token_type = {0};
         span_t       token_raw  = {0},
@@ -214,7 +200,7 @@ int mdml_parse(const char* input)
             goto next;
         }
 
-        SPAN_LTRIM(&line);
+        span_ltrim(&line);
         token_raw.ptr = line.ptr;
 
         for (int i = 0; i < line.length; i++) {
@@ -238,7 +224,6 @@ int mdml_parse(const char* input)
 
 next:
         DA_APPEND(&tokens, (token_t){token_type, op, op_extra});
-        line.ptr = newline + 1;
     }
 
     mdml_convert(&tokens);
