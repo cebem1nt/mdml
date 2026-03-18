@@ -19,34 +19,27 @@
 #define BACE_IMPLEMENTATION
 #include "include/bace.h" // IWYU pragma: keep
 
-#define STACK_DEPTH 100
-#define TOKEN_IS_PRIMARY(t) ((t) == TOKEN_H1 || \
-                             (t) == TOKEN_H2 || \
-                             (t) == TOKEN_H3 || \
-                             (t) == TOKEN_H4 || \
-                             (t) == TOKEN_H5 || \
-                             (t) == TOKEN_OL || \
-                             (t) == TOKEN_UL || \
-                             (t) == TOKEN_H6)
+#define TAB     "    "
+#define TAB_LEN 4
 
 typedef enum {
     TOKEN_UNKNOWN = -1,
     TOKEN_NEWLINE,
     TOKEN_TEXT,
+    TOKEN_TAB,
+    TOKEN_NUM,
+    TOKEN_DASH,
     TOKEN_H1,
     TOKEN_H2,
     TOKEN_H3,
     TOKEN_H4,
     TOKEN_H5,
     TOKEN_H6,
-    TOKEN_OL,
-    TOKEN_UL,
 } token_kind_t;
 
 typedef struct {
-    token_kind_t type;
-    span_t operand;
-    span_t operand_extra;
+    token_kind_t kind;
+    span_t entry;
 } token_t;
 
 typedef struct {
@@ -55,10 +48,25 @@ typedef struct {
     size_t len;
 } tokens_arr_t;
 
-/*
- * Takes in any kind of span and matches it to a token
- */
-token_kind_t mdml_span_tokenize(span_t raw) 
+static const char* token_name(token_kind_t t) 
+{
+    switch (t) {
+        case TOKEN_UNKNOWN: return "TOKEN_UNKNOWN";
+        case TOKEN_NEWLINE: return "TOKEN_NEWLINE";
+        case TOKEN_TEXT:    return "TOKEN_TEXT";
+        case TOKEN_TAB:     return "TOKEN_TAB";
+        case TOKEN_H1:      return "TOKEN_H1";
+        case TOKEN_H2:      return "TOKEN_H2";
+        case TOKEN_H3:      return "TOKEN_H3";
+        case TOKEN_H4:      return "TOKEN_H4";
+        case TOKEN_H5:      return "TOKEN_H5";
+        case TOKEN_H6:      return "TOKEN_H6";
+        case TOKEN_NUM:     return "TOKEN_NUM";
+        case TOKEN_DASH:    return "TOKEN_DASH";
+    }
+}
+
+token_kind_t mdml_match_token(span_t raw) 
 {
     if (span_iseq(raw, SPAN("#"))) 
         return TOKEN_H1;
@@ -79,29 +87,12 @@ token_kind_t mdml_span_tokenize(span_t raw)
         return TOKEN_H6;
 
     if (span_iseq(raw, SPAN("-"))) 
-        return TOKEN_UL;
+        return TOKEN_DASH;
 
     if (isdigit(raw.ptr[0]) && raw.ptr[raw.length-1] == '.')
-        return TOKEN_OL;
+        return TOKEN_NUM;
 
     return TOKEN_TEXT;
-}
-
-const char* mdml_token_to_html(token_kind_t tk) 
-{
-    switch (tk) {
-        case TOKEN_NEWLINE: return "br";
-        case TOKEN_TEXT:    return "p";
-        case TOKEN_H1:      return "h1";
-        case TOKEN_H2:      return "h2";
-        case TOKEN_H3:      return "h3";
-        case TOKEN_H4:      return "h4";
-        case TOKEN_H5:      return "h5";
-        case TOKEN_H6:      return "h6";
-        case TOKEN_OL:      return "ol";
-        case TOKEN_UL:      return "ul";
-        default:            return "div";
-    }
 }
 
 int mdml_lex(span_t stream, tokens_arr_t* dest) 
@@ -109,52 +100,50 @@ int mdml_lex(span_t stream, tokens_arr_t* dest)
     while (stream.length != 0) {
         span_t line = span_chop_by(&stream, '\n');
 
-        token_kind_t kind;
-        span_t       token_raw  = {0},
-                     op_extra   = SPAN_EMPTY,
-                     op         = SPAN_EMPTY;
-        
+        token_kind_t  kind;
+        span_t        raw = {0};
+
         if (line.length == 0) {
             kind = TOKEN_NEWLINE;
-            goto next;
-        }
-
-        span_ltrim(&line);
-        token_raw.ptr = line.ptr;
-
-        for (int i = 0; i < line.length; i++) {
-            if (line.ptr[i] == ' ')
-                break;
-            token_raw.length++;
-        }
-
-        kind = mdml_span_tokenize(token_raw);
-
-        if (kind == TOKEN_TEXT) {
-            op.ptr = line.ptr;
-            op.length = line.length;
+            DA_APPEND(dest, (token_t){kind, raw});
+            continue;
         }
         
-        else if (TOKEN_IS_PRIMARY(kind)) {
-            op.ptr = line.ptr + token_raw.length;
-            op.length = line.length - token_raw.length;
-            span_ltrim(&op);
+        // Strip tabs and put them as tokens
+        while (true) {
+            int len;
+
+            if (span_starts_with(line, SPAN(TAB)))
+                len = TAB_LEN;
+            else if (span_starts_with(line, SPAN("\t")))
+                len = 1;
+            else 
+                break;
+
+            line.ptr += len;
+            line.length -= len;
+            DA_APPEND(dest, (token_t){TOKEN_TAB, raw});
         }
 
-next:
-        DA_APPEND(dest, (token_t){kind, op, op_extra});
+        raw = span_chop_by(&line, ' ');
+        kind = mdml_match_token(raw);
+        DA_APPEND(dest, (token_t){kind, raw});
+        
+        if (line.length > 0)
+            DA_APPEND(dest, (token_t){TOKEN_TEXT, line});
+    }
+
+    for (int i = 0; i < dest->len; i++) {
+        printf("%s :"SPAN_FMT":\n", token_name(dest->arr[i].kind),
+                                    SPAN_ARG(dest->arr[i].entry));
     }
 
     return 0;
 }
 
-int mdml_convert(tokens_arr_t* tokens) 
+int mdml_convert(tokens_arr_t* tokens)
 {
-    token_kind_t stack[STACK_DEPTH];
-    size_t       stack_top = 0;
-
     printf("TODO: mdml_convert\n");
-
     return 0;
 }
 
@@ -172,7 +161,7 @@ int mdml_parse(const char* input)
 
     stream = span_from_cstr(input_buf);
     mdml_lex(stream, &tokens);
-    mdml_convert(&tokens);
+    // mdml_convert(&tokens);
 
     free(input_buf);
     return 0;
