@@ -21,6 +21,7 @@
 
 #define TAB     "    "
 #define TAB_LEN 4
+#define MAX_STACK_DEPTH 10 // I dont think you can nest more than 10 lists
 
 typedef enum {
     TOKEN_UNKNOWN = -1,
@@ -47,6 +48,17 @@ typedef struct {
     size_t cap;
     size_t len;
 } tokens_arr_t;
+
+typedef struct {
+    span_t* arr;
+    size_t  cap;
+    size_t  len;
+} spans_arr_t;
+
+typedef struct {
+    bool is_ordered;
+    spans_arr_t items;
+} html_list_t;
 
 static const char* token_name(token_kind_t t) 
 {
@@ -95,6 +107,25 @@ token_kind_t mdml_match_token(span_t raw)
     return TOKEN_TEXT;
 }
 
+const char* mdml_token_to_html(token_kind_t t) 
+{
+    switch (t) {
+        case TOKEN_NEWLINE: return "br";
+        case TOKEN_TEXT:    return "p";
+        case TOKEN_H1:      return "h1";
+        case TOKEN_H2:      return "h2";
+        case TOKEN_H3:      return "h3";
+        case TOKEN_H4:      return "h4";
+        case TOKEN_H5:      return "h5";
+        case TOKEN_H6:      return "h6";
+        case TOKEN_NUM:     return "li";
+        case TOKEN_DASH:    return "li";
+        case TOKEN_TAB:     return NULL; // Non html token
+        default:            return "div";
+    }
+}
+
+
 int mdml_lex(span_t stream, tokens_arr_t* dest) 
 {
     while (stream.length != 0) {
@@ -133,17 +164,50 @@ int mdml_lex(span_t stream, tokens_arr_t* dest)
             DA_APPEND(dest, (token_t){TOKEN_TEXT, line});
     }
 
-    for (int i = 0; i < dest->len; i++) {
-        printf("%s :"SPAN_FMT":\n", token_name(dest->arr[i].kind),
-                                    SPAN_ARG(dest->arr[i].entry));
-    }
-
     return 0;
+}
+
+void mdml_convert_text(token_t t) 
+{
+    if (t.kind != TOKEN_TEXT)
+        return;
+
+    printf(SPAN_FMT, SPAN_ARG(t.entry));
 }
 
 int mdml_convert(tokens_arr_t* tokens)
 {
-    printf("TODO: mdml_convert\n");
+    // Precompute tabs and create a stack with 
+    // html lists based on list type and items
+
+    html_list_t  stack[MAX_STACK_DEPTH];
+    size_t       stack_top = 0;
+
+    for (int i = 0; i < tokens->len; i++) {
+        token_t t = tokens->arr[i];
+
+        const char* html = mdml_token_to_html(t.kind);
+        
+        if (t.kind == TOKEN_NEWLINE) {
+            printf("<br>\n");
+            continue;
+        } 
+        
+        else if (t.kind == TOKEN_TAB) {
+            printf(TAB); // TMP for debug
+        }
+        
+        else {
+            if (i + 1 > tokens->len)
+                break; // TODO: Weird moment, handle properly 
+
+            printf("<%s>", html);
+            mdml_convert_text(tokens->arr[++i]);
+            printf("</%s>", html);
+            printf("\n");
+        }
+    }
+
     return 0;
 }
 
@@ -161,7 +225,7 @@ int mdml_parse(const char* input)
 
     stream = span_from_cstr(input_buf);
     mdml_lex(stream, &tokens);
-    // mdml_convert(&tokens);
+    mdml_convert(&tokens);
 
     free(input_buf);
     return 0;
