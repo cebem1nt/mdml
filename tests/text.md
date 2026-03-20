@@ -4,3 +4,4 @@ Newline and some kind of continuation
 
 ## Some misc notes
 Bla bla bla **abc** *de* _fg_ __hij__
+Bla bla bla **abc de de** re *fg hij*

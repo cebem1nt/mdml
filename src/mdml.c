@@ -74,7 +74,7 @@ const char* mdml_kind_to_html(line_kind_t k)
     }
 }
 
-line_kind_t mdml_line_get_kind(span_t* line) 
+line_kind_t mdml_line_get_kind(span_t* line)
 {
     if (line->length == 0)
         return KIND_NEWLINE;
@@ -119,14 +119,68 @@ static void indent(size_t n)
 
 void mdml_convert_text(span_t text, const char* html) 
 {
-    // TODO make formatting
     if (html == NULL) {
         printf(SPAN_FMT"\n", SPAN_ARG(text));
         return;
     }
 
     printf("<%s>", html);
-    printf(SPAN_FMT, SPAN_ARG(text));
+
+    // I did not come up with better solution for formatting
+    while (text.length > 0) {
+        span_t word = span_chop_by(&text, ' ');
+        char   ending[50] = "";
+
+        if (word.length == 0) {
+            putchar(' ');
+            continue;
+        }
+
+        while (span_starts_with(word, SPAN("**")) ||
+               span_starts_with(word, SPAN("__")) ||
+               span_starts_with(word, SPAN("~~")) ||
+               span_starts_with(word, SPAN("*"))  ||
+               span_starts_with(word, SPAN("_"))
+        ) {
+            if (span_ltrims(&word, SPAN("**")) > 0 || 
+                span_ltrims(&word, SPAN("__")) > 0) 
+                printf("<b>");
+
+            if (span_ltrims(&word, SPAN("*")) > 0 || 
+                span_ltrims(&word, SPAN("_")) > 0) 
+                printf("<i>");
+
+            if (span_ltrims(&word, SPAN("~~")))
+                printf("<del>");
+        }
+
+        while (span_ends_with(word, SPAN("**")) ||
+               span_ends_with(word, SPAN("__")) ||
+               span_ends_with(word, SPAN("~~")) ||
+               span_ends_with(word, SPAN("*"))  ||
+               span_ends_with(word, SPAN("_"))
+        ) {
+            if (strlen(ending) >= 20)
+                break;
+
+            if (span_rtrims(&word, SPAN("**")) > 0 || 
+                span_rtrims(&word, SPAN("__")) > 0) 
+                strcat(ending, "</b>");
+
+            if (span_rtrims(&word, SPAN("*")) > 0 || 
+                span_rtrims(&word, SPAN("_")) > 0) 
+                strcat(ending, "</i>");
+
+            if (span_rtrims(&word, SPAN("~~")))
+                strcat(ending, "</del>");
+        }
+
+        if (text.length > 0) // I really don't like that extra space in the html
+            printf(SPAN_FMT"%s ", SPAN_ARG(word), ending);
+        else
+            printf(SPAN_FMT"%s", SPAN_ARG(word), ending);
+    }
+
     printf("</%s>\n", html);
 }
 
@@ -201,7 +255,6 @@ int mdml_parse(const char* input)
 
     // Lex
     bool has_fence = false;
-
     while (stream.length > 0) {
         span_t line = span_chop_by(&stream, '\n');
         line_t parsed = {0};
