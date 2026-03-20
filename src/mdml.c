@@ -24,6 +24,7 @@
 
 #define TAB "    "
 #define TAB_LEN 4
+#define STACK_DEPTH 20 // Definitely no more than 20 nested lists
 
 typedef enum {
     KIND_UNKNOWN = -1,
@@ -49,6 +50,23 @@ typedef struct {
     line_t* arr;
     size_t  cap, len;
 } lines_arr_t;
+
+const char* mdml_kind_to_html(line_kind_t k) 
+{
+    switch (k) {
+        case KIND_UNKNOWN: return "div";
+        case KIND_TEXT:    return "p"; 
+        case KIND_H1:      return "h1";
+        case KIND_H2:      return "h2";
+        case KIND_H3:      return "h3";
+        case KIND_H4:      return "h4";
+        case KIND_H5:      return "h5";
+        case KIND_H6:      return "h6";
+        case KIND_OL:      return "ol";
+        case KIND_UL:      return "ul";
+        case KIND_NEWLINE: return "br"; // for now, might be another thing
+    }
+}
 
 line_kind_t mdml_line_get_kind(span_t* line) 
 {
@@ -87,17 +105,52 @@ line_kind_t mdml_line_get_kind(span_t* line)
     return KIND_TEXT;
 }
 
+static void _indent(size_t n) 
+{
+    for (int i = 0; i < n; i++)
+        printf("  ");
+}
+
 int mdml_convert(lines_arr_t* lines) 
 {
-    for (size_t i = 0; i < lines->len; i++) {
-        line_t l = lines->arr[i];
-        printf("Type %i, indent (%lu):", l.kind, l.indent);
+    line_kind_t stack[STACK_DEPTH];
+    size_t      stack_top = 0;
 
-        if (l.kind == KIND_NEWLINE) {
-            printf("NEWLINE\n");
-        } else {
-            printf(SPAN_FMT"\n", SPAN_ARG(l.operand));
+    for (size_t i = 0; i < lines->len; i++) {
+        line_t ln = lines->arr[i];
+        const char* html = mdml_kind_to_html(ln.kind);
+
+        switch (ln.kind) {
+        case KIND_OL:
+        case KIND_UL:
+            ln.indent += 1;
+
+            if (ln.indent > stack_top) {
+                _indent(stack_top);
+                stack[stack_top++] = ln.kind;
+                printf("<%s>\n", html);
+            }
+
+            _indent(ln.indent);
+            printf("<li>"SPAN_FMT"</li>\n", SPAN_ARG(ln.operand));
+            break;
+
+        default:
+            while (stack_top > 0) {
+                _indent(--stack_top);
+                printf("</%s>\n", mdml_kind_to_html(stack[stack_top]));
+            }
+
+            printf("<%s>", html);
+            printf(SPAN_FMT, SPAN_ARG(ln.operand));
+            printf("</%s>\n", html);
         }
+    }
+
+    // Empty the stack
+    while (stack_top > 0) {
+        _indent(--stack_top);
+        printf("</%s>\n", mdml_kind_to_html(stack[stack_top]));
     }
 
     return 0;
@@ -110,7 +163,9 @@ int mdml_parse(const char* input)
     size_t      input_size;
     char*       input_buf;
 
-    input_buf = readfile(input, &input_size);
+    if ((input_buf = readfile(input, &input_size)) == NULL)
+        return 1;
+
     stream.ptr = input_buf;
     stream.length = input_size;
 
@@ -145,5 +200,5 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    mdml_parse(argv[1]);
+    return mdml_parse(argv[1]);
 }
