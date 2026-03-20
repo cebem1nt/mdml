@@ -37,6 +37,9 @@ typedef enum {
     KIND_H6,
     KIND_OL,
     KIND_UL,
+    KIND_PRE_OPENED,
+    KIND_PRE_CLOSED,
+    KIND_BARE,
     KIND_NEWLINE,
 } line_kind_t;
 
@@ -54,17 +57,20 @@ typedef struct {
 const char* mdml_kind_to_html(line_kind_t k) 
 {
     switch (k) {
-        case KIND_UNKNOWN: return "div";
-        case KIND_TEXT:    return "p"; 
-        case KIND_H1:      return "h1";
-        case KIND_H2:      return "h2";
-        case KIND_H3:      return "h3";
-        case KIND_H4:      return "h4";
-        case KIND_H5:      return "h5";
-        case KIND_H6:      return "h6";
-        case KIND_OL:      return "ol";
-        case KIND_UL:      return "ul";
-        case KIND_NEWLINE: return "br"; // for now, might be another thing
+        case KIND_UNKNOWN:        return "div";
+        case KIND_TEXT:           return "p"; 
+        case KIND_H1:             return "h1";
+        case KIND_H2:             return "h2";
+        case KIND_H3:             return "h3";
+        case KIND_H4:             return "h4";
+        case KIND_H5:             return "h5";
+        case KIND_H6:             return "h6";
+        case KIND_OL:             return "ol";
+        case KIND_UL:             return "ul";
+        case KIND_NEWLINE:        return "br"; // for now, might be another thing
+        case KIND_PRE_CLOSED:
+        case KIND_PRE_OPENED:     return "pre";
+        case KIND_BARE:           return NULL;
     }
 }
 
@@ -105,10 +111,23 @@ line_kind_t mdml_line_get_kind(span_t* line)
     return KIND_TEXT;
 }
 
-static void _indent(size_t n) 
+static void indent(size_t n) 
 {
     for (int i = 0; i < n; i++)
         printf("  ");
+}
+
+void mdml_convert_text(span_t text, const char* html) 
+{
+    // TODO make formatting
+    if (html == NULL) {
+        printf(SPAN_FMT"\n", SPAN_ARG(text));
+        return;
+    }
+
+    printf("<%s>", html);
+    printf(SPAN_FMT, SPAN_ARG(text));
+    printf("</%s>\n", html);
 }
 
 int mdml_convert(lines_arr_t* lines) 
@@ -126,30 +145,39 @@ int mdml_convert(lines_arr_t* lines)
             ln.indent += 1;
 
             if (ln.indent > stack_top) {
-                _indent(stack_top);
+                if (stack_top >= STACK_DEPTH) 
+                    return 2;
+
+                indent(stack_top);
                 stack[stack_top++] = ln.kind;
                 printf("<%s>\n", html);
             }
 
-            _indent(ln.indent);
-            printf("<li>"SPAN_FMT"</li>\n", SPAN_ARG(ln.operand));
+            indent(ln.indent);
+            mdml_convert_text(ln.operand, "li");
             break;
 
         default:
             while (stack_top > 0) {
-                _indent(--stack_top);
+                indent(--stack_top);
                 printf("</%s>\n", mdml_kind_to_html(stack[stack_top]));
             }
 
-            printf("<%s>", html);
-            printf(SPAN_FMT, SPAN_ARG(ln.operand));
-            printf("</%s>\n", html);
+            if (ln.kind == KIND_NEWLINE)
+                continue; // Just skip, might do other thing 
+
+            if (ln.kind == KIND_PRE_OPENED)
+                printf("<pre>\n");
+            else if (ln.kind == KIND_PRE_CLOSED)
+                printf("</pre>\n");
+            else
+                mdml_convert_text(ln.operand, html);
         }
     }
 
     // Empty the stack
     while (stack_top > 0) {
-        _indent(--stack_top);
+        indent(--stack_top);
         printf("</%s>\n", mdml_kind_to_html(stack[stack_top]));
     }
 
@@ -171,26 +199,39 @@ int mdml_parse(const char* input)
 
     DA_INIT(&lines, line_t, 20);
 
+    // Lex
+    bool has_fence = false;
+
     while (stream.length > 0) {
         span_t line = span_chop_by(&stream, '\n');
         line_t parsed = {0};
 
-        // \t is ignored on purpose.
-        while (span_starts_with(line, SPAN(TAB))) {
+        if (span_ltrims(&line, SPAN("```")) > 0) {
+            has_fence = !has_fence;
+            parsed.kind = has_fence ? KIND_PRE_OPENED
+                                    : KIND_PRE_CLOSED;
+            goto next;
+        }
+
+        while (span_starts_with(line, SPAN(TAB)) && !has_fence) {
             parsed.indent++;
             line.ptr += TAB_LEN;
             line.length -= TAB_LEN;
         }
+        
+        if (has_fence) {
+            parsed.kind = KIND_BARE;
+        } else {
+            parsed.kind = mdml_line_get_kind(&line);
+            span_ltrim(&line);
+        }
 
-        parsed.kind = mdml_line_get_kind(&line);
-        span_ltrim(&line);
-
+next:
         parsed.operand = line;
         DA_APPEND(&lines, parsed);
     }
 
-    mdml_convert(&lines);
-    return 0;
+    return mdml_convert(&lines);
 }
 
 int main(int argc, char** argv) 
