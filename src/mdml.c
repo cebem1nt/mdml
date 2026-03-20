@@ -1,210 +1,102 @@
 /*
  * Some notes.
- * We can differ md formatting in three pieces.
- *  Primary: The main formating options that come at the
- *           beginning of each line. Fo example: headers,
- *           bulleted / numbered lists, code blocks
- *  
- * Secondary (or formating): 
- *      Is any kind of formatting text. like **bold**, _italic_ 
+ * We can differ md formatting in two pieces.
+ *   - line
+ *   - formatting
+ * 
+ * In md if line is something special, like header, text, list,
+ * you can understand that by matching the first token of the line
+ * By token i mean the first word after splitting by ' '.
+ * We can qualify them by different "Kinds"
  *
- * Special:
- *  Weird md things, like image notations [something]() or hyprlinks,
- *  possibly sections like >
+ * So line has a kind and optionally text.
+ * By text I mean any sequence of chars (or a single one)
  *
- * We'll focus primary on first two groups, the special 
- * one will come somewhere in the future 
+ * Example: 
+ * - Lorem ipsum
+ *
+ * This is a line, kind is "Unordered List" and text is "Lorem ipsum"
+ *
  */
 
 #define BACE_IMPLEMENTATION
 #include "include/bace.h" // IWYU pragma: keep
 
-#define TAB     "    "
+#define TAB "    "
 #define TAB_LEN 4
-#define MAX_STACK_DEPTH 10 // I dont think you can nest more than 10 lists
 
 typedef enum {
-    TOKEN_UNKNOWN = -1,
-    TOKEN_NEWLINE,
-    TOKEN_TEXT,
-    TOKEN_TAB,
-    TOKEN_NUM,
-    TOKEN_DASH,
-    TOKEN_H1,
-    TOKEN_H2,
-    TOKEN_H3,
-    TOKEN_H4,
-    TOKEN_H5,
-    TOKEN_H6,
-} token_kind_t;
+    KIND_UNKNOWN = -1,
+    KIND_TEXT,
+    KIND_H1,
+    KIND_H2,
+    KIND_H3,
+    KIND_H4,
+    KIND_H5,
+    KIND_H6,
+    KIND_OL,
+    KIND_UL,
+    KIND_NEWLINE,
+} line_kind_t;
 
 typedef struct {
-    token_kind_t kind;
-    span_t entry;
-} token_t;
+    line_kind_t kind;
+    span_t operand;
+    size_t indent; // Line indentation
+} line_t;
 
 typedef struct {
-    token_t* arr;
-    size_t cap;
-    size_t len;
-} tokens_arr_t;
+    line_t* arr;
+    size_t  cap, len;
+} lines_arr_t;
 
-typedef struct {
-    span_t* arr;
-    size_t  cap;
-    size_t  len;
-} spans_arr_t;
-
-typedef struct {
-    bool is_ordered;
-    spans_arr_t items;
-} html_list_t;
-
-static const char* token_name(token_kind_t t) 
+line_kind_t mdml_line_get_kind(span_t* line) 
 {
-    switch (t) {
-        case TOKEN_UNKNOWN: return "TOKEN_UNKNOWN";
-        case TOKEN_NEWLINE: return "TOKEN_NEWLINE";
-        case TOKEN_TEXT:    return "TOKEN_TEXT";
-        case TOKEN_TAB:     return "TOKEN_TAB";
-        case TOKEN_H1:      return "TOKEN_H1";
-        case TOKEN_H2:      return "TOKEN_H2";
-        case TOKEN_H3:      return "TOKEN_H3";
-        case TOKEN_H4:      return "TOKEN_H4";
-        case TOKEN_H5:      return "TOKEN_H5";
-        case TOKEN_H6:      return "TOKEN_H6";
-        case TOKEN_NUM:     return "TOKEN_NUM";
-        case TOKEN_DASH:    return "TOKEN_DASH";
-    }
-}
+    if (line->length == 0)
+        return KIND_NEWLINE;
 
-token_kind_t mdml_match_token(span_t raw) 
-{
-    if (span_iseq(raw, SPAN("#"))) 
-        return TOKEN_H1;
+    if (span_ltrims(line, SPAN("######")) != 0)
+        return KIND_H6;
 
-    if (span_iseq(raw, SPAN("##"))) 
-        return TOKEN_H2;    
-    
-    if (span_iseq(raw, SPAN("###"))) 
-        return TOKEN_H3;
-    
-    if (span_iseq(raw, SPAN("####"))) 
-        return TOKEN_H4;
-    
-    if (span_iseq(raw, SPAN("#####"))) 
-        return TOKEN_H5;
+    if (span_ltrims(line, SPAN("#####")) != 0)
+        return KIND_H5;
 
-    if (span_iseq(raw, SPAN("######"))) 
-        return TOKEN_H6;
+    if (span_ltrims(line, SPAN("####")) != 0)
+        return KIND_H4;
 
-    if (span_iseq(raw, SPAN("-"))) 
-        return TOKEN_DASH;
+    if (span_ltrims(line, SPAN("###")) != 0)
+        return KIND_H3;
 
-    if (isdigit(raw.ptr[0]) && raw.ptr[raw.length-1] == '.')
-        return TOKEN_NUM;
+    if (span_ltrims(line, SPAN("##")) != 0)
+        return KIND_H2;
 
-    return TOKEN_TEXT;
-}
+    if (span_ltrims(line, SPAN("#")) != 0)
+        return KIND_H1;
 
-const char* mdml_token_to_html(token_kind_t t) 
-{
-    switch (t) {
-        case TOKEN_NEWLINE: return "br";
-        case TOKEN_TEXT:    return "p";
-        case TOKEN_H1:      return "h1";
-        case TOKEN_H2:      return "h2";
-        case TOKEN_H3:      return "h3";
-        case TOKEN_H4:      return "h4";
-        case TOKEN_H5:      return "h5";
-        case TOKEN_H6:      return "h6";
-        case TOKEN_NUM:     return "li";
-        case TOKEN_DASH:    return "li";
-        case TOKEN_TAB:     return NULL; // Non html token
-        default:            return "div";
-    }
-}
+    if (span_ltrims(line, SPAN("-")) != 0)
+        return KIND_UL;
 
-
-int mdml_lex(span_t stream, tokens_arr_t* dest) 
-{
-    while (stream.length != 0) {
-        span_t line = span_chop_by(&stream, '\n');
-
-        token_kind_t  kind;
-        span_t        raw = {0};
-
-        if (line.length == 0) {
-            kind = TOKEN_NEWLINE;
-            DA_APPEND(dest, (token_t){kind, raw});
-            continue;
-        }
+    if (line->length >= 2 &&
+        isdigit(line->ptr[0]) && line->ptr[1] == '.') {
         
-        // Strip tabs and put them as tokens
-        while (true) {
-            int len;
-
-            if (span_starts_with(line, SPAN(TAB)))
-                len = TAB_LEN;
-            else if (span_starts_with(line, SPAN("\t")))
-                len = 1;
-            else 
-                break;
-
-            line.ptr += len;
-            line.length -= len;
-            DA_APPEND(dest, (token_t){TOKEN_TAB, raw});
-        }
-
-        raw = span_chop_by(&line, ' ');
-        kind = mdml_match_token(raw);
-        DA_APPEND(dest, (token_t){kind, raw});
-        
-        if (line.length > 0)
-            DA_APPEND(dest, (token_t){TOKEN_TEXT, line});
+        line->ptr += 2;
+        line->length -= 2;
+        return KIND_OL;
     }
 
-    return 0;
+    return KIND_TEXT;
 }
 
-void mdml_convert_text(token_t t) 
+int mdml_convert(lines_arr_t* lines) 
 {
-    if (t.kind != TOKEN_TEXT)
-        return;
+    for (size_t i = 0; i < lines->len; i++) {
+        line_t l = lines->arr[i];
+        printf("Type %i, indent (%lu):", l.kind, l.indent);
 
-    printf(SPAN_FMT, SPAN_ARG(t.entry));
-}
-
-int mdml_convert(tokens_arr_t* tokens)
-{
-    // Precompute tabs and create a stack with 
-    // html lists based on list type and items
-
-    html_list_t  stack[MAX_STACK_DEPTH];
-    size_t       stack_top = 0;
-
-    for (int i = 0; i < tokens->len; i++) {
-        token_t t = tokens->arr[i];
-
-        const char* html = mdml_token_to_html(t.kind);
-        
-        if (t.kind == TOKEN_NEWLINE) {
-            printf("<br>\n");
-            continue;
-        } 
-        
-        else if (t.kind == TOKEN_TAB) {
-            printf(TAB); // TMP for debug
-        }
-        
-        else {
-            if (i + 1 > tokens->len)
-                break; // TODO: Weird moment, handle properly 
-
-            printf("<%s>", html);
-            mdml_convert_text(tokens->arr[++i]);
-            printf("</%s>", html);
-            printf("\n");
+        if (l.kind == KIND_NEWLINE) {
+            printf("NEWLINE\n");
+        } else {
+            printf(SPAN_FMT"\n", SPAN_ARG(l.operand));
         }
     }
 
@@ -213,21 +105,36 @@ int mdml_convert(tokens_arr_t* tokens)
 
 int mdml_parse(const char* input) 
 {
-    tokens_arr_t tokens;
-    span_t       stream;
-    size_t       input_size;
-    char*        input_buf;
+    lines_arr_t lines;
+    span_t      stream;
+    size_t      input_size;
+    char*       input_buf;
 
-    DA_INIT(&tokens, token_t, 20);
-    
-    if ((input_buf = readfile(input, &input_size)) == NULL)
-        error_exit("Could not read file\n");
+    input_buf = readfile(input, &input_size);
+    stream.ptr = input_buf;
+    stream.length = input_size;
 
-    stream = span_from_cstr(input_buf);
-    mdml_lex(stream, &tokens);
-    mdml_convert(&tokens);
+    DA_INIT(&lines, line_t, 20);
 
-    free(input_buf);
+    while (stream.length > 0) {
+        span_t line = span_chop_by(&stream, '\n');
+        line_t parsed = {0};
+
+        // \t is ignored on purpose.
+        while (span_starts_with(line, SPAN(TAB))) {
+            parsed.indent++;
+            line.ptr += TAB_LEN;
+            line.length -= TAB_LEN;
+        }
+
+        parsed.kind = mdml_line_get_kind(&line);
+        span_ltrim(&line);
+
+        parsed.operand = line;
+        DA_APPEND(&lines, parsed);
+    }
+
+    mdml_convert(&lines);
     return 0;
 }
 
