@@ -13,7 +13,7 @@
 1. First
     - Sub step
     - _Sub second step_
-    - ~~Aboba~~
+    - ~~**Aboba**~~
         - foo
         - bar
 

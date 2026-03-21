@@ -17,6 +17,11 @@
  *
  * This is a line, kind is "Unordered List" and text is "Lorem ipsum"
  *
+ * Links
+ * links are a kind of special formatting, they look like:
+ *
+ * [any text](link/to/something)
+ * 
  */
 
 #define BACE_IMPLEMENTATION
@@ -25,7 +30,6 @@
 #define TAB "    "
 #define TAB_LEN 4
 #define STACK_DEPTH 20 // Definitely no more than 20 nested lists
-#define TOTAL_MARKERS 5 // Formatting markers
 
 typedef enum {
     KIND_UNKNOWN = -1,
@@ -58,16 +62,20 @@ typedef struct {
 typedef struct {
     size_t length; 
     char*  marker;
-    char*  tag; 
+    char*  otag;
+    char*  ctag; 
 } fmt_marker_t;
 
 fmt_marker_t markers[] = {
-    {2, "~~", "del"},
-    {2, "**", "b"},
-    {2, "__", "b"},
-    {2, "==", "u"},
-    {1, "*",  "i"},
-    {1, "_",  "i"},
+    {3, "***", "<b><i>", "</i></b>"},
+    {3, "___", "<b><i>", "</i></b>"},
+    {2, "**",  "<b>",    "</b>"},
+    {2, "__",  "<b>",    "</b>"},
+    {2, "~~",  "<del>",  "</del>"},
+    {2, "==",  "<u>",    "</u>"},
+    {1, "*",   "<i>",    "</i>"},
+    {1, "_",   "<i>",    "</i>"},
+    {1, "`",   "<code>", "</code>"},
 };
 
 const char* mdml_kind_to_html(line_kind_t k) 
@@ -113,7 +121,9 @@ line_kind_t mdml_line_get_kind(span_t* line)
     if (span_ltrims(line, SPAN("#")) != 0)
         return KIND_H1;
 
-    if (span_ltrims(line, SPAN("-")) != 0)
+    if (span_ltrims(line, SPAN("-")) != 0 ||
+        span_ltrims(line, SPAN("*")) != 0 ||
+        span_ltrims(line, SPAN("+")) != 0 )
         return KIND_UL;
 
     if (line->length >= 2 &&
@@ -145,10 +155,10 @@ void mdml_convert_text(span_t text, const char* html)
     while (text.length > 0) {
         bool is_matched = false;
 
-        for (int i = 0; i < TOTAL_MARKERS; i++) {
+        for (int i = 0; i < sizeof(markers)/sizeof(markers[0]); i++) {
             fmt_marker_t* m = &markers[i];
 
-            span_t m_raw = {    
+            span_t m_raw = {
                 m->marker,
                 m->length
             };
@@ -157,10 +167,10 @@ void mdml_convert_text(span_t text, const char* html)
                 continue;
 
             if (stack.len > 0 && stack.arr[stack.len - 1] == i) {
-                printf("</%s>", m->tag);
+                printf("%s", m->ctag);
                 DA_POP(&stack);
             } else {
-                printf("<%s>", m->tag);
+                printf("%s", m->otag);
                 DA_APPEND(&stack, i);
             }
 
@@ -177,7 +187,7 @@ void mdml_convert_text(span_t text, const char* html)
 
     while (stack.len > 0) {
         int i = DA_POP(&stack);
-        printf("</%s>", markers[i].tag);
+        printf("%s", markers[i].ctag);
     }
 
     printf("</%s>\n", html);
