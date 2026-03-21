@@ -25,6 +25,7 @@
 #define TAB "    "
 #define TAB_LEN 4
 #define STACK_DEPTH 20 // Definitely no more than 20 nested lists
+#define TOTAL_MARKERS 5 // Formatting markers
 
 typedef enum {
     KIND_UNKNOWN = -1,
@@ -52,13 +53,22 @@ typedef struct {
 typedef struct {
     line_t* arr;
     size_t  cap, len;
-} lines_arr_t;
+} line_da_t;
 
 typedef struct {
     size_t length; 
     char*  marker;
     char*  tag; 
 } fmt_marker_t;
+
+fmt_marker_t markers[] = {
+    {2, "~~", "del"},
+    {2, "**", "b"},
+    {2, "__", "b"},
+    {2, "==", "u"},
+    {1, "*",  "i"},
+    {1, "_",  "i"},
+};
 
 const char* mdml_kind_to_html(line_kind_t k) 
 {
@@ -108,9 +118,7 @@ line_kind_t mdml_line_get_kind(span_t* line)
 
     if (line->length >= 2 &&
         isdigit(line->ptr[0]) && line->ptr[1] == '.') {
-        
-        line->ptr += 2;
-        line->length -= 2;
+        span_advance(line, 2);
         return KIND_OL;
     }
 
@@ -130,24 +138,14 @@ void mdml_convert_text(span_t text, const char* html)
         return;
     }
 
-    fmt_marker_t markers[] = {
-        {2, "~~", "del"},
-        {2, "**", "b"},
-        {2, "__", "b"},
-        {2, "==", "u"},
-        {1, "*",  "i"},
-        {1, "_",  "i"},
-    };
-
-    size_t total_markers = 5;
-    int* stack = malloc(text.length * sizeof(int));
-    int  stack_top = 0;
+    int_da_t stack;
+    DA_INIT(&stack, 20);
     
     printf("<%s>", html);
     while (text.length > 0) {
         bool is_matched = false;
 
-        for (int i = 0; i < total_markers; i++) {
+        for (int i = 0; i < TOTAL_MARKERS; i++) {
             fmt_marker_t* m = &markers[i];
 
             span_t m_raw = {    
@@ -158,36 +156,34 @@ void mdml_convert_text(span_t text, const char* html)
             if (!span_starts_with(text, m_raw))
                 continue;
 
-            if (stack_top > 0 && stack[stack_top - 1] == i) {
+            if (stack.len > 0 && stack.arr[stack.len - 1] == i) {
                 printf("</%s>", m->tag);
-                stack_top--;
+                DA_POP(&stack);
             } else {
                 printf("<%s>", m->tag);
-                stack[stack_top++] = i;
+                DA_APPEND(&stack, i);
             }
 
             is_matched = true;
-            text.ptr += m->length;
-            text.length -= m->length;
+            span_advance(&text, m->length);
             break;
         }
 
         if (!is_matched) {
             putchar(*text.ptr);
-            text.ptr++;
-            text.length--;
+            span_advance(&text, 1);
         }
     }
 
-    while (stack_top > 0) {
-        int i = stack[--stack_top];
+    while (stack.len > 0) {
+        int i = DA_POP(&stack);
         printf("</%s>", markers[i].tag);
     }
 
     printf("</%s>\n", html);
 }
 
-int mdml_convert(lines_arr_t* lines) 
+int mdml_convert(line_da_t* lines) 
 {
     line_kind_t stack[STACK_DEPTH];
     size_t      stack_top = 0;
@@ -243,7 +239,7 @@ int mdml_convert(lines_arr_t* lines)
 
 int mdml_parse(const char* input) 
 {
-    lines_arr_t lines;
+    line_da_t   lines;
     span_t      stream;
     size_t      input_size;
     char*       input_buf;
@@ -254,7 +250,7 @@ int mdml_parse(const char* input)
     stream.ptr = input_buf;
     stream.length = input_size;
 
-    DA_INIT(&lines, line_t, 20);
+    DA_INIT(&lines);
 
     // Lex
     bool has_fence = false;
@@ -271,8 +267,7 @@ int mdml_parse(const char* input)
 
         while (span_starts_with(line, SPAN(TAB)) && !has_fence) {
             parsed.indent++;
-            line.ptr += TAB_LEN;
-            line.length -= TAB_LEN;
+            span_advance(&line, TAB_LEN);
         }
         
         if (has_fence) {
