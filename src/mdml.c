@@ -54,6 +54,12 @@ typedef struct {
     size_t  cap, len;
 } lines_arr_t;
 
+typedef struct {
+    size_t length; 
+    char*  marker;
+    char*  tag; 
+} fmt_marker_t;
+
 const char* mdml_kind_to_html(line_kind_t k) 
 {
     switch (k) {
@@ -124,61 +130,58 @@ void mdml_convert_text(span_t text, const char* html)
         return;
     }
 
+    fmt_marker_t markers[] = {
+        {2, "~~", "del"},
+        {2, "**", "b"},
+        {2, "__", "b"},
+        {2, "==", "u"},
+        {1, "*",  "i"},
+        {1, "_",  "i"},
+    };
+
+    size_t total_markers = 5;
+    int* stack = malloc(text.length * sizeof(int));
+    int  stack_top = 0;
+    
     printf("<%s>", html);
-
-    // I did not come up with better solution for formatting
     while (text.length > 0) {
-        span_t word = span_chop_by(&text, ' ');
-        char   ending[50] = "";
+        bool is_matched = false;
 
-        if (word.length == 0) {
-            putchar(' ');
-            continue;
+        for (int i = 0; i < total_markers; i++) {
+            fmt_marker_t* m = &markers[i];
+
+            span_t m_raw = {    
+                m->marker,
+                m->length
+            };
+
+            if (!span_starts_with(text, m_raw))
+                continue;
+
+            if (stack_top > 0 && stack[stack_top - 1] == i) {
+                printf("</%s>", m->tag);
+                stack_top--;
+            } else {
+                printf("<%s>", m->tag);
+                stack[stack_top++] = i;
+            }
+
+            is_matched = true;
+            text.ptr += m->length;
+            text.length -= m->length;
+            break;
         }
 
-        while (span_starts_with(word, SPAN("**")) ||
-               span_starts_with(word, SPAN("__")) ||
-               span_starts_with(word, SPAN("~~")) ||
-               span_starts_with(word, SPAN("*"))  ||
-               span_starts_with(word, SPAN("_"))
-        ) {
-            if (span_ltrims(&word, SPAN("**")) > 0 || 
-                span_ltrims(&word, SPAN("__")) > 0) 
-                printf("<b>");
-
-            if (span_ltrims(&word, SPAN("*")) > 0 || 
-                span_ltrims(&word, SPAN("_")) > 0) 
-                printf("<i>");
-
-            if (span_ltrims(&word, SPAN("~~")))
-                printf("<del>");
+        if (!is_matched) {
+            putchar(*text.ptr);
+            text.ptr++;
+            text.length--;
         }
+    }
 
-        while (span_ends_with(word, SPAN("**")) ||
-               span_ends_with(word, SPAN("__")) ||
-               span_ends_with(word, SPAN("~~")) ||
-               span_ends_with(word, SPAN("*"))  ||
-               span_ends_with(word, SPAN("_"))
-        ) {
-            if (strlen(ending) >= 20)
-                break;
-
-            if (span_rtrims(&word, SPAN("**")) > 0 || 
-                span_rtrims(&word, SPAN("__")) > 0) 
-                strcat(ending, "</b>");
-
-            if (span_rtrims(&word, SPAN("*")) > 0 || 
-                span_rtrims(&word, SPAN("_")) > 0) 
-                strcat(ending, "</i>");
-
-            if (span_rtrims(&word, SPAN("~~")))
-                strcat(ending, "</del>");
-        }
-
-        if (text.length > 0) // I really don't like that extra space in the html
-            printf(SPAN_FMT"%s ", SPAN_ARG(word), ending);
-        else
-            printf(SPAN_FMT"%s", SPAN_ARG(word), ending);
+    while (stack_top > 0) {
+        int i = stack[--stack_top];
+        printf("</%s>", markers[i].tag);
     }
 
     printf("</%s>\n", html);
